@@ -1,29 +1,28 @@
+const {
+  allPromisesRejectedMessage,
+  arrayRequeredMessage,
+  Status,
+} = require('./constants');
+
 function isThenable(value) {
   return value instanceof Promise;
 }
 
 function isArray(x) {
-  return x.constructor === Array;
+  return x && x.constructor === Array;
 }
 
 function AggregateError(message) {
   this.name = 'AggregateError';
   this.message = message || '';
 }
-AggregateError.prototype = Error.prototype;
-
-const Status = {
-  F: 'fulfilled',
-  R: 'rejected',
-  P: 'pending',
-};
+AggregateError.prototype = Object.create(Error.prototype);
+AggregateError.prototype.constructor = AggregateError;
 
 var invokeAsync = globalThis.setImmediate || setTimeout;
-var arrayRequereMessage = 'Promise.any accepts an array';
-var allPromisesRejectedMessage = 'All promises were rejected';
 
 function Promise(callback) {
-  this.state = Status.P;
+  this.state = Status.PENDING;
   this._resolve = this._resolve.bind(this);
   this._reject = this._reject.bind(this);
   this._handled = false;
@@ -34,8 +33,8 @@ function Promise(callback) {
     this._reject(e);
   }
 }
-
-var proto = Promise.prototype;
+var P = Promise;
+var proto = P.prototype;
 
 proto._addHandlers = function (handlers) {
   this.handlers.push(handlers);
@@ -43,38 +42,42 @@ proto._addHandlers = function (handlers) {
 
 proto._executeHandlers = function () {
   const self = this;
-  if (self.state === Status.P) {
+  if (self.state === Status.PENDING) {
     return;
   }
 
-  if (self.state === Status.R && !self.handlers.length) {
+  if (self.state === Status.REJECTED && !self._handled) {
     invokeAsync(function () {
       if (!self._handled) {
         throw self.value;
       }
     });
   }
-  self.handlers.forEach((handler) => {
-    invokeAsync(function () {
-      if (self.state === Status.F) {
+
+  var handlers = self.handlers;
+  self.handlers = [];
+
+  invokeAsync(function () {
+    handlers.forEach(function (handler) {
+      if (self.state === Status.FULFILLED) {
         return handler.onSuccessHandler(self.value);
       }
       return handler.onFailHandler(self.value);
     });
   });
-
-  self.handlers = [];
 };
 
 proto._updateResult = function (state, value) {
   const self = this;
-  if (self.state !== Status.P) {
+  if (self.state !== Status.PENDING) {
     return;
   }
+
   if (isThenable(value)) {
     value.then(self._resolve, self._reject);
     return;
   }
+
   self.state = state;
   self.value = value;
 
@@ -82,11 +85,11 @@ proto._updateResult = function (state, value) {
 };
 
 proto._resolve = function (value) {
-  this._updateResult(Status.F, value);
+  this._updateResult(Status.FULFILLED, value);
 };
 
 proto._reject = function (value) {
-  this._updateResult(Status.R, value);
+  this._updateResult(Status.REJECTED, value);
 };
 
 proto.then = function (onSuccess, onFail) {
@@ -105,16 +108,16 @@ proto.then = function (onSuccess, onFail) {
   var self = this;
   self._handled = true;
 
-  return new Promise(function (resolve, reject) {
+  return new P(function (resolve, reject) {
     self._addHandlers({
-      onSuccessHandler: (value) => {
+      onSuccessHandler: function(value) {
         try {
           resolve(onSuccess(value));
         } catch (e) {
           reject(e);
         }
       },
-      onFailHandler: (value) => {
+      onFailHandler: function(value) {
         try {
           resolve(onFail(value));
         } catch (e) {
@@ -132,8 +135,8 @@ proto.catch = function (onFail) {
 
 proto.finally = function (callback) {
   var call = function (result, failed) {
-    return Promise.resolve(callback()).then(function () {
-      return failed ? Promise.reject(result) : result;
+    return P.resolve(callback()).then(function () {
+      return failed ? P.reject(result) : result;
     });
   };
   return this.then(
@@ -146,30 +149,31 @@ proto.finally = function (callback) {
   );
 };
 
-Promise.resolve = function (value) {
+P.resolve = function (value) {
   return isThenable(value)
     ? value
-    : new Promise(function (resolve) {
+    : new P(function (resolve) {
         resolve(value);
       });
 };
 
-Promise.reject = function (value) {
-  return new Promise((_, reject) => reject(value));
+P.reject = function (value) {
+  return new P(function (_, reject) {
+    reject(value)
+  });
 };
 
-Promise.all = function (promises) {
-  return new this((resolve, reject) => {
+P.all = function (promises) {
+  return new P(function (resolve, reject) {
     if (!isArray(promises)) {
-      return reject(new TypeError(arrayRequereMessage));
+      return reject(new TypeError(arrayRequeredMessage));
     }
-
+    if (!promises.length) return resolve([]);
     var promiseCount = 0;
     var results = [];
-
-    promises.forEach((promise, index) => {
+    promises.forEach(function (promise, index) {
       promise
-        .then((result) => {
+        .then(function(result) {
           results[index] = result;
           promiseCount++;
           if (promiseCount === promises.length) resolve(results);
@@ -179,20 +183,21 @@ Promise.all = function (promises) {
   });
 };
 
-Promise.any = function (promises) {
-  return new this((resolve, reject) => {
+P.any = function (promises) {
+  return new P(function (resolve, reject) {
     if (!isArray(promises)) {
-      return reject(new TypeError(arrayRequereMessage));
+      return reject(new TypeError(arrayRequeredMessage));
     }
     if (!promises.length) {
       return reject(new AggregateError(allPromisesRejectedMessage));
     }
     var promiseCount = 0;
-
-    promises.forEach((promise) => {
-      Promise.resolve(promise)
-        .then((result) => resolve(result))
-        .catch(() => {
+    promises.forEach(function (promise) {
+      P.resolve(promise)
+        .then(function (result) {
+          resolve(result)
+        })
+        .catch(function () {
           promiseCount++;
           if (promiseCount === promises.length) {
             reject(new AggregateError(allPromisesRejectedMessage));
@@ -202,41 +207,47 @@ Promise.any = function (promises) {
   });
 };
 
-Promise.race = function (promises) {
-  return new this((resolve, reject) => {
+P.race = function (promises) {
+  return new P(function (resolve, reject){
     if (!isArray(promises)) {
-      return reject(new TypeError(arrayRequereMessage));
+      return reject(new TypeError(arrayRequeredMessage));
     }
-    promises.forEach((promise) => {
-      promise.then(resolve).catch(reject);
+    promises.forEach(function (promise) {
+      P.resolve(promise).then(resolve).catch(reject);
     });
   });
 };
 
-Promise.allSettled = function (promises) {
-  return new this((resolve, reject) => {
-    if (!isArray(promises)) {
-      return reject(new TypeError(arrayRequereMessage));
-    }
-    if (!promises.length) {
-      resolve([]);
-      return;
-    }
-    var promiseCount = 0;
-    var results = [];
+P.allSettled = function (promises) {
+  if (!isArray(promises)) {
+    return P.reject(new TypeError(arrayRequeredMessage));
+  }
+  return P.all(
+    promises.map(function(p) {
+      return P.resolve(p)
+      .then(function (value) { 
+        return { status: Status.FULFILLED, value }
+      })
+      .catch(function (reason) {
+        return { status: Status.REJECTED, reason }
+      })
+    })
+  );
+};
 
-    function setResult(index, status, value) {
-      results[index] = { status, value };
-      promiseCount++;
-      if (promiseCount === promises.length) resolve(results);
-    }
-
-    promises.forEach((promise, index) => {
-      promise
-        .then((result) => setResult(index, Status.F, result))
-        .catch((e) => setResult(index, Status.R, e));
-    });
+P.try = function (value) {
+  return new P(function (resolve) {
+    resolve(value)
   });
+};
+
+P.withResolvers = function () {
+  let resolve, reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 };
 
 module.exports = Promise;

@@ -1,4 +1,9 @@
 const Promise = require('../dist/polyfill.js');
+const {
+  allPromisesRejectedMessage,
+  arrayRequeredMessage,
+  Status,
+} = require('../src/constants');
 
 describe('Promise', () => {
   it('should resolve correctly', (done) => {
@@ -113,6 +118,24 @@ describe('Promise', () => {
       });
     });
 
+    it('Promise.all should reject if it does not receive an array', (done) => {
+      const promises = null;
+
+      Promise.all(promises).catch((error) => {
+        expect(error.message).toBe(arrayRequeredMessage);
+        done();
+      });
+    });
+
+    it('Promise.all should resolve with an empty array', (done) => {
+      const promises = [];
+
+      Promise.all(promises).then((result) => {
+        expect(result).toEqual([]);
+        done();
+      });
+    });
+
     it('Promise.any should resolve with the first resolved value', (done) => {
       const promises = [
         Promise.reject('Error1'),
@@ -131,6 +154,24 @@ describe('Promise', () => {
 
       Promise.any(promises).catch((error) => {
         expect(error.message).toBe('All promises were rejected');
+        done();
+      });
+    });
+
+    it('Promise.any should reject if it does not receive an array', (done) => {
+      const promises = null;
+
+      Promise.any(promises).catch((error) => {
+        expect(error.message).toBe(arrayRequeredMessage);
+        done();
+      });
+    });
+
+    it('Promise.any should reject if it receives an empty array', (done) => {
+      const promises = [];
+
+      Promise.any(promises).catch((error) => {
+        expect(error.message).toBe(allPromisesRejectedMessage);
         done();
       });
     });
@@ -159,7 +200,33 @@ describe('Promise', () => {
       });
     });
 
-    it('Promise.allSettled ', (done) => {
+    it('Promise.race should reject if it does not receive an array', (done) => {
+      const promises = null;
+
+      Promise.race(promises).catch((error) => {
+        expect(error.message).toEqual(arrayRequeredMessage);
+        done();
+      });
+    });
+
+    it('Promise.allSettled should return the result as an array of objects with properties status (fulfilled) and value', (done) => {
+      const promises = [
+        Promise.resolve('First Success'),
+        Promise.resolve('Second Success'),
+        Promise.resolve('Third Success'),
+      ];
+
+      Promise.allSettled(promises).then((result) => {
+        expect(result).toEqual([
+          { status: Status.FULFILLED, value: 'First Success' },
+          { status: Status.FULFILLED, value: 'Second Success' },
+          { status: Status.FULFILLED, value: 'Third Success' },
+        ]);
+        done();
+      });
+    });
+
+    it('Promise.allSettled should return the result as an array of objects with properties status and value or status and reason', (done) => {
       const promises = [
         Promise.reject('Error1'),
         Promise.resolve('First Success'),
@@ -168,10 +235,28 @@ describe('Promise', () => {
 
       Promise.allSettled(promises).then((result) => {
         expect(result).toEqual([
-          { status: 'rejected', value: 'Error1' },
-          { status: 'fulfilled', value: 'First Success' },
-          { status: 'fulfilled', value: 'Second Success' },
+          { status: Status.REJECTED, reason: 'Error1' },
+          { status: Status.FULFILLED, value: 'First Success' },
+          { status: Status.FULFILLED, value: 'Second Success' },
         ]);
+        done();
+      });
+    });
+
+    it('Promise.allSettled should reject if it does not receive an array', (done) => {
+      const promises = null;
+
+      Promise.allSettled(promises).catch((error) => {
+        expect(error.message).toEqual(arrayRequeredMessage);
+        done();
+      });
+    });
+
+    it('Promise.allSettled should resolve with an empty array', (done) => {
+      const promises = [];
+
+      Promise.allSettled(promises).then((result) => {
+        expect(result).toEqual([]);
         done();
       });
     });
